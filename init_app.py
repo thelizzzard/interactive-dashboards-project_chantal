@@ -12,8 +12,10 @@ def _():
     from ipyniivue import NiiVue
     from pathlib import Path
     import nibabel as nib
+    from scipy.spatial import KDTree
+    import numpy as np
 
-    return NiiVue, Path, datasets, mo
+    return KDTree, NiiVue, Path, datasets, mo, nib
 
 
 @app.cell(hide_code=True)
@@ -56,7 +58,34 @@ def _(mo):
 
 
 @app.cell
-def _(NiiVue, Path, fsaverage, hemi, set_label):
+def _(KDTree, fsaverage, nib):
+    lh_coords, _ = nib.load(fsaverage["infl_left"]).agg_data()
+    rh_coords, _ = nib.load(fsaverage["infl_right"]).agg_data()
+
+    lh_tree = KDTree(lh_coords)
+    rh_tree = KDTree(rh_coords)
+
+
+    lh_labels, _, lh_names = nib.freesurfer.read_annot("data/atlases/lh.HCPMMP1.annot")
+    rh_labels, _, rh_names = nib.freesurfer.read_annot("data/atlases/rh.HCPMMP1.annot")
+
+    hemisphere = {
+        "Left":  {
+            "tree":   lh_tree,
+            "labels": lh_labels,
+            "names":  ["Background"] + [n.decode() if isinstance(n, bytes) else n for n in lh_names[1:]],
+        },
+        "Right": {
+            "tree":   rh_tree,
+            "labels": rh_labels,
+            "names":  ["Background"] + [n.decode() if isinstance(n, bytes) else n for n in rh_names[1:]],
+        },
+    }
+    return (hemisphere,)
+
+
+@app.cell
+def _(NiiVue, Path, fsaverage, hemi, hemisphere, set_label):
     meshes = []
     if hemi.value in ("Left"):
         meshes.append({
@@ -73,10 +102,19 @@ def _(NiiVue, Path, fsaverage, hemi, set_label):
     nv.load_meshes(meshes)
 
 
+
     @nv.on_location_change
     def show_location(location):
-        set_label(location["string"])
-
+        coords_str = location["string"]
+        try:
+            x, y, z = [float(v) for v in coords_str.split("×")]
+            h = hemisphere[hemi.value]
+            dist, idx = h["tree"].query([x, y, z])
+            region = h["names"][h["labels"][idx]]
+            set_label(f"{hemi.value} | {region} | vertex: {idx} | {coords_str}")
+        except Exception as e:
+            set_label(f"Error: {e}")
+    
     nv
     return
 
@@ -85,6 +123,7 @@ def _(NiiVue, Path, fsaverage, hemi, set_label):
 def _(get_label, mo):
 
     mo.md(get_label())
+
     return
 
 
